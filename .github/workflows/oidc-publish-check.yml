@@ -37,6 +37,12 @@ jobs:
         env:
           WORK: ${{ runner.temp }}/release-explainer
         run: node action/src/check-presentation-structure.ts "$WORK/out"
+      # The voice model is a one-time 337 MB download; keep it between runs.
+      - name: Restore the speech models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bisque/models
+          key: bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-kokoro-v2
       - name: Narrate on this runner and publish
         id: publish
         env:
