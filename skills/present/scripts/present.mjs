@@ -717,7 +717,11 @@ function ensureEngineInstalled(bin, flags) {
       `${formatBytes(spec.downloadBytes)} download:`,
   );
   say(`  bisque-voice install ${engineId}`);
-  const res = spawnSync(bin, ["install", engineId], { stdio: "inherit" });
+  // stdout goes to stderr: `install` prints the model path on stdout, and
+  // publish's stdout is the one JSON result a caller parses.
+  const res = spawnSync(bin, ["install", engineId], {
+    stdio: ["inherit", process.stderr, "inherit"],
+  });
   if (res.error) {
     fail(`could not run bisque-voice install: ${res.error.message}`);
   }
@@ -762,7 +766,9 @@ function ensureAlignerInstalled(bin, flags) {
       `${formatBytes(spec.downloadBytes)} download:`,
   );
   say(`  bisque-voice install ${spec.id}`);
-  const res = spawnSync(bin, ["install", spec.id], { stdio: "inherit" });
+  const res = spawnSync(bin, ["install", spec.id], {
+    stdio: ["inherit", process.stderr, "inherit"],
+  });
   if (res.error || res.status !== 0) {
     say(
       `note: aligner install failed — continuing with the engine's own ` +
