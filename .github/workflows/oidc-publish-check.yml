@@ -19,8 +19,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      WORK: ${{ runner.temp }}/release-explainer
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -32,13 +30,18 @@ jobs:
           ACTION_PATH: ${{ github.workspace }}
         run: node action/src/install-and-verify-skill.ts hash
       - name: Stage the fixture as the agent's output
+        env:
+          WORK: ${{ runner.temp }}/release-explainer
         run: mkdir -p "$WORK/out" && cp fixture/* "$WORK/out/"
       - name: Check the presentation
+        env:
+          WORK: ${{ runner.temp }}/release-explainer
         run: node action/src/check-presentation-structure.ts "$WORK/out"
       - name: Narrate on this runner and publish
         id: publish
         env:
           BISQUE_GITHUB_OIDC: "1"
+          WORK: ${{ runner.temp }}/release-explainer
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ACTION_PATH: ${{ github.workspace }}
