@@ -1,0 +1,56 @@
+# Publishes the fixture presentation in fixture/ through the action's own
+# publish step, with no Bisque key: the run's GitHub OIDC identity is the
+# credential, and the explainer lands on this repository's channel. No model
+# runs, so it needs no secret at all.
+name: OIDC publish check
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Slug to publish under; the same slug again replaces it
+        default: oidc-check
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      WORK: ${{ runner.temp }}/release-explainer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Snapshot the skill
+        id: skill
+        env:
+          ACTION_PATH: ${{ github.workspace }}
+        run: node action/src/install-and-verify-skill.ts hash
+      - name: Stage the fixture as the agent's output
+        run: mkdir -p "$WORK/out" && cp fixture/* "$WORK/out/"
+      - name: Check the presentation
+        run: node action/src/check-presentation-structure.ts "$WORK/out"
+      - name: Narrate on this runner and publish
+        id: publish
+        env:
+          BISQUE_GITHUB_OIDC: "1"
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTION_PATH: ${{ github.workspace }}
+          EXPECTED_HASH: ${{ steps.skill.outputs.hash }}
+          TITLE: A repository that publishes its own explainers
+          SLUG: ${{ inputs.slug }}
+        run: node action/src/narrate-and-publish.ts
+      - name: Report
+        env:
+          WATCH_URL: ${{ steps.publish.outputs.watch-url }}
+          PRESENTATION_ID: ${{ steps.publish.outputs.presentation-id }}
+        run: |
+          echo "watch-url=$WATCH_URL"
+          echo "presentation-id=$PRESENTATION_ID"
+          echo "### Published: $WATCH_URL" >> "$GITHUB_STEP_SUMMARY"

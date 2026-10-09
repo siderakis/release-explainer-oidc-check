@@ -1,0 +1,42 @@
+# The pull request explainer exactly as docs/github describes it, except that
+# it runs the action from this repository's own copy (`uses: ./`) instead of
+# bisque-cloud/presenter@v1, so the branch under test is what runs.
+name: Pull request explainer
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write # post the watch link as a comment
+  issues: write # react to the /explain comment
+  id-token: write # publish as this repository, no Bisque account
+
+jobs:
+  explain:
+    if: >-
+      github.event.issue.pull_request &&
+      (github.event.comment.body == '/explain' ||
+       startsWith(github.event.comment.body, '/explain '))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require write access, and react so the commenter knows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          perm="$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)"
+          case "$perm" in
+            write|maintain|admin) echo "$ACTOR: $perm" ;;
+            *) echo "::error::$ACTOR has '$perm' permission; /explain needs write."; exit 1 ;;
+          esac
+          gh api --silent -X POST \
+            "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content=eyes
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./
+        with:
+          source: pull-request
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

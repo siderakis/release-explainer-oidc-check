@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="presentation-format" content="html-presentation/v1" />
+    <meta name="presentation-transition" content="fade" />
+    <title>A repository that publishes its own explainers</title>
+    <style>
+      body {
+        margin: 0;
+        color: #1f2328;
+        font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+      }
+      [data-layout] {
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 48px;
+      }
+      [data-layout="landscape"] {
+        width: 1920px;
+        height: 1080px;
+        padding: 140px 160px;
+      }
+      [data-layout="vertical"] {
+        width: 1080px;
+        height: 1920px;
+        padding: 160px 96px;
+      }
+      .tag {
+        font: 700 30px/1 ui-monospace, Menlo, monospace;
+        color: #57606a;
+      }
+      h1,
+      h2 {
+        margin: 0;
+        font-family: ui-serif, Georgia, serif;
+        font-size: 104px;
+        line-height: 1.05;
+      }
+      [data-layout="vertical"] h1,
+      [data-layout="vertical"] h2 {
+        font-size: 92px;
+      }
+      p {
+        margin: 0;
+        font-size: 44px;
+        line-height: 1.35;
+        color: #424a53;
+        max-width: 1400px;
+      }
+      code {
+        font-family: ui-monospace, Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="slides">
+      <section
+        id="open"
+        data-title="No Bisque account"
+        data-background="linear-gradient(135deg, #f6f8fa 0%, #eef1f5 60%, #e8eef6 100%)"
+      >
+        <div data-layout="landscape">
+          <div class="tag">siderakis/release-explainer-oidc-check</div>
+          <h1>This repository published its own explainer.</h1>
+          <p>
+            No Bisque account and no Bisque key: the workflow showed GitHub's
+            signed identity for this run instead.
+          </p>
+        </div>
+        <div data-layout="vertical">
+          <div class="tag">siderakis/release-explainer-oidc-check</div>
+          <h1>This repository published its own explainer.</h1>
+          <p>
+            No Bisque account and no Bisque key: the workflow showed GitHub's
+            signed identity for this run instead.
+          </p>
+        </div>
+        <aside class="notes">
+          This repository published this page on its own. There is no Bisque
+          account behind it and no Bisque key in its secrets. The workflow
+          showed GitHub's signed identity for the run instead.
+        </aside>
+      </section>
+
+      <section
+        id="where"
+        data-title="Where it lands"
+        data-background="linear-gradient(135deg, #f6f8fa 0%, #edf3ee 55%, #e9eef7 100%)"
+      >
+        <div data-layout="landscape">
+          <div class="tag">bisque.today/p/{owner}/{repo}</div>
+          <h2>It lands at the repository's own path.</h2>
+          <p>
+            <code>id-token: write</code> in the workflow is the whole setup.
+            The repository's owner claims the channel by signing in with
+            GitHub.
+          </p>
+        </div>
+        <div data-layout="vertical">
+          <div class="tag">bisque.today/p/{owner}/{repo}</div>
+          <h2>It lands at the repository's own path.</h2>
+          <p>
+            <code>id-token: write</code> in the workflow is the whole setup.
+            The repository's owner claims the channel by signing in with
+            GitHub.
+          </p>
+        </div>
+        <aside class="notes">
+          It lands at the repository's own path, the owner and the repository
+          name. One line in the workflow, id token write, is the whole setup.
+          Whoever owns the repository claims the channel by signing in with
+          GitHub.
+        </aside>
+      </section>
+    </div>
+  </body>
+</html>

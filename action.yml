@@ -1,0 +1,305 @@
+name: Release Explainer
+description: >-
+  Narrated explainer of every release, made by the model you already pay for
+  and posted where the release is read. Bring your own key or your Claude
+  plan; no Bisque account needed. Also explains pull requests.
+author: Bisque
+branding:
+  icon: play-circle
+  color: orange
+
+inputs:
+  # Set one of these. The key names the provider, and the provider decides
+  # the model, so the simplest workflow names no model at all.
+  claude-code-oauth-token:
+    description: >-
+      Runs Claude Code on your Claude Pro, Max, Team or Enterprise plan. Make
+      one with `claude setup-token`. Defaults to the model Claude Code picks
+      for your plan.
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: Runs Anthropic. Defaults to claude-opus-5 at medium effort.
+    required: false
+    default: ""
+  openai-api-key:
+    description: Runs OpenAI. Defaults to gpt-5.6-sol at medium effort.
+    required: false
+    default: ""
+  google-api-key:
+    description: Runs Google. Defaults to gemini-3.1-pro-preview.
+    required: false
+    default: ""
+  xai-api-key:
+    description: Runs xAI. Defaults to grok-4.6.
+    required: false
+    default: ""
+
+  model:
+    description: >-
+      Override the default with a `provider/model` id from
+      https://models.dev, for example `anthropic/claude-sonnet-4-6`. Its
+      provider must be the one whose key you supplied. OpenCode runs it, so
+      any model in the catalog works without a new release of this action.
+    required: false
+    default: ""
+  variant:
+    description: Reasoning effort, where the provider has one (for example high, max, minimal).
+    required: false
+    default: ""
+  claude-code-version:
+    description: >-
+      The Claude Code release that runs a `claude-code-oauth-token`. Pinned for
+      the same reason as opencode-version.
+    required: false
+    default: "2.1.296"
+  opencode-version:
+    description: >-
+      The OpenCode release that runs the model. Pinned so an upstream release
+      cannot change what this action does overnight; raise it deliberately.
+    required: false
+    default: "1.18.30"
+
+  network:
+    description: >-
+      `allow` (default) or `deny`. The agent uses a shell and the network to
+      download the fonts and images the presentation format requires. Denying
+      both contains contributor-controlled text on a repository that takes
+      pull requests from strangers, and costs custom typography.
+    required: false
+    default: "allow"
+
+  source:
+    description: What to explain. `release` (the release that fired the workflow) or `pull-request`.
+    required: false
+    default: "release"
+  tag:
+    description: Explain this release tag instead of the one in the event. For manual runs.
+    required: false
+    default: ""
+  pull-request:
+    description: Explain this pull request number instead of the one in the event. For manual runs.
+    required: false
+    default: ""
+
+  bisque-api-key:
+    description: >-
+      Optional. Without it the explainer publishes to this repository's own
+      channel, bisque.today/p/{owner}/{repo}, using the GitHub-signed identity
+      of the workflow run (it needs `permissions: id-token: write`). The
+      repository's owner claims that channel by signing in with GitHub. With a
+      Bisque agent API key it publishes to that account instead; pair it with
+      bisque-user-id.
+    required: false
+    default: ""
+  bisque-user-id:
+    description: The Bisque user id that owns bisque-api-key.
+    required: false
+    default: ""
+  voice:
+    description: >-
+      A bisque-voice voice id, engine-qualified, like kokoro:af_heart. Narration
+      runs on this runner. Empty uses the voice saved for the channel, else the
+      account, on bisque.cloud, and kokoro:af_heart when neither saved one.
+      If bisque.cloud cannot be read, the run fails rather than guess a voice.
+      Whatever engine that names is downloaded on the first run and cached; a
+      Studio voice (qwen3-*) is a multi-gigabyte download.
+    required: false
+    default: ""
+  visibility:
+    description: >-
+      public or unlisted. Empty means public for a public repository and
+      unlisted for a private one, so private notes never land on a public
+      channel by default.
+    required: false
+    default: ""
+  github-token:
+    description: Token used to read the release or pull request and to post the watch link.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  watch-url:
+    description: The published explainer.
+    value: ${{ steps.publish.outputs.watch-url }}
+  presentation-id:
+    description: The presentation id, for analytics and republishing.
+    value: ${{ steps.publish.outputs.presentation-id }}
+
+runs:
+  using: composite
+  steps:
+    # Third-party actions are pinned to a full commit SHA, which GitHub calls
+    # the only way to use an action as an immutable release. The comment is
+    # the tag that SHA carried when it was pinned.
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: "22"
+
+    - name: Gather the release or pull request
+      id: source
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        SOURCE: ${{ inputs.source }}
+        TAG_INPUT: ${{ inputs.tag }}
+        PR_INPUT: ${{ inputs.pull-request }}
+        EVENT_PATH: ${{ github.event_path }}
+        REPO: ${{ github.repository }}
+        WORK: ${{ runner.temp }}/release-explainer
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "${{ github.action_path }}/action/src/gather-release-or-pull-request.ts"
+
+    # Recorded before the agent runs. The publish step refuses a skill whose
+    # hash no longer matches, so nothing the agent edited runs with the
+    # Bisque credential.
+    - name: Snapshot the skill
+      id: skill
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "${{ github.action_path }}/action/src/install-and-verify-skill.ts" hash
+
+    # The only step that holds the provider key. It hands the key to a local
+    # proxy over stdin and exits, so the agent step below runs with no key in
+    # its environment and none in any process environment it can read.
+    - name: Start the key proxy
+      id: proxy
+      shell: bash
+      env:
+        MODEL: ${{ inputs.model }}
+        VARIANT: ${{ inputs.variant }}
+        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        GOOGLE_API_KEY: ${{ inputs.google-api-key }}
+        XAI_API_KEY: ${{ inputs.xai-api-key }}
+        WORK: ${{ runner.temp }}/release-explainer
+      run: node "${{ github.action_path }}/action/src/key-proxy-lifecycle.ts" start
+
+    # A pinned npm release rather than `curl | bash`: the version is visible
+    # in the workflow, npm verifies the package, and an upstream release
+    # cannot change what this action does without an edit here.
+    - name: Install OpenCode
+      if: steps.proxy.outputs.engine == 'opencode'
+      shell: bash
+      env:
+        OPENCODE_VERSION: ${{ inputs.opencode-version }}
+      run: npm install -g --no-fund --no-audit "opencode-ai@${OPENCODE_VERSION}"
+
+    - name: Install Claude Code
+      if: steps.proxy.outputs.engine == 'claude-code'
+      shell: bash
+      env:
+        CLAUDE_CODE_VERSION: ${{ inputs.claude-code-version }}
+      run: npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+    - name: Author with ${{ steps.proxy.outputs.model }}
+      id: agent
+      shell: bash
+      env:
+        MODEL: ${{ steps.proxy.outputs.model }}
+        VARIANT: ${{ steps.proxy.outputs.variant }}
+        BASE_PATH: ${{ steps.proxy.outputs.base-path }}
+        NETWORK: ${{ inputs.network }}
+        SOURCE: ${{ inputs.source }}
+        PROXY_PORT: ${{ steps.proxy.outputs.port }}
+        ACTION_PATH: ${{ github.action_path }}
+        WORK: ${{ runner.temp }}/release-explainer
+      # The runner hands every step the means to mint this job's GitHub OIDC
+      # token, which is what publishes. `exec env -u` drops them before node
+      # starts, so the agent cannot read them back from its parent process
+      # (/proc/<pid>/environ shows the environment of the last exec).
+      run: >-
+        exec env -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL
+        -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL
+        node "${{ github.action_path }}/action/src/run-agent-headless.ts"
+
+    - name: Stop the key proxy
+      if: always()
+      shell: bash
+      env:
+        WORK: ${{ runner.temp }}/release-explainer
+      run: node "${{ github.action_path }}/action/src/key-proxy-lifecycle.ts" stop
+
+    - name: Check the presentation
+      shell: bash
+      env:
+        WORK: ${{ runner.temp }}/release-explainer
+      run: node "${{ github.action_path }}/action/src/check-presentation-structure.ts" "$WORK/out"
+
+    # Restore and save are split because the voice is not known until publish
+    # resolves it from the account, so the saved key is named after the models
+    # actually installed, not after an input that may be empty.
+    - name: Restore the speech models
+      id: models-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.bisque/models
+        key: bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-v2
+        restore-keys: |
+          bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Narrate on this runner and publish
+      id: publish
+      shell: bash
+      env:
+        BISQUE_API_KEY: ${{ inputs.bisque-api-key }}
+        BISQUE_USER_ID: ${{ inputs.bisque-user-id }}
+        # No Bisque key: publish as this repository, with the run's GitHub
+        # identity, to bisque.today/p/{owner}/{repo}.
+        BISQUE_GITHUB_OIDC: ${{ inputs.bisque-api-key == '' && '1' || '' }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        ACTION_PATH: ${{ github.action_path }}
+        EXPECTED_HASH: ${{ steps.skill.outputs.hash }}
+        VOICE: ${{ inputs.voice }}
+        VISIBILITY: ${{ inputs.visibility }}
+        WORK: ${{ runner.temp }}/release-explainer
+        TITLE: ${{ steps.source.outputs.title }}
+        SLUG: ${{ steps.source.outputs.slug }}
+      run: node "${{ github.action_path }}/action/src/narrate-and-publish.ts"
+
+    - name: Name the installed speech models
+      id: models
+      if: always()
+      shell: bash
+      run: |
+        key=$(cd ~/.bisque/models 2>/dev/null && ls -d */ 2>/dev/null | tr -d / | sort | paste -sd+ -)
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+
+    - name: Save the speech models
+      if: always() && steps.models.outputs.key != '' && steps.models-cache.outputs.cache-matched-key != format('bisque-voice-models-{0}-{1}-{2}-v2', runner.os, runner.arch, steps.models.outputs.key)
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.bisque/models
+        key: bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-${{ steps.models.outputs.key }}-v2
+
+    # The agent's working directory, minus the proxy state, so a bad run can
+    # be read from the job page instead of reproduced.
+    - name: Upload the working files
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: release-explainer-${{ steps.proxy.outputs.provider }}
+        path: |
+          ${{ runner.temp }}/release-explainer
+          !${{ runner.temp }}/release-explainer/key-proxy.*
+        retention-days: 7
+        if-no-files-found: ignore
+
+    - name: Post the watch link where the ${{ inputs.source }} is read
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        SOURCE: ${{ inputs.source }}
+        REPO: ${{ github.repository }}
+        TAG: ${{ steps.source.outputs.tag }}
+        PR_NUMBER: ${{ steps.source.outputs.pr-number }}
+        TITLE: ${{ steps.source.outputs.title }}
+        WATCH_URL: ${{ steps.publish.outputs.watch-url }}
+        PRESENTATION_ID: ${{ steps.publish.outputs.presentation-id }}
+        # Whose storage the poster image is under: the account, or the
+        # repository channel's principal.
+        BISQUE_USER_ID: ${{ inputs.bisque-api-key != '' && inputs.bisque-user-id || format('github-repo-{0}', github.repository_id) }}
+      run: node "${{ github.action_path }}/action/src/post-watch-link.ts"
