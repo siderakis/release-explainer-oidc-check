@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: run
-        uses: bisque-cloud/presenter@8b80753a7a03f67f15c797eeb18ffa3cbb87ea9c
+        uses: bisque-cloud/presenter@v1
         with:
           source: pull-request
           when: judged
