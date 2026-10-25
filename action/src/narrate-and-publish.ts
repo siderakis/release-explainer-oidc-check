@@ -1,6 +1,6 @@
 // Step: narrate on this runner with bisque-voice, then publish through the
-// present skill. This step is the only one that holds the Bisque credential,
-// and it runs a fresh copy of the skill whose hash it verifies first.
+// present skill. This step is the only one that can mint the run's GitHub
+// identity, and it runs a fresh copy of the skill whose hash it verifies first.
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -14,21 +14,23 @@ const out = join(work, "out");
 const actionPath = process.env.ACTION_PATH;
 let visibility = process.env.VISIBILITY || "";
 
-// Who publishes: a Bisque account's key, or, with none, this repository
-// itself through the run's GitHub OIDC identity. Checked before anything is
-// installed or narrated, so a missing permission costs seconds, not minutes.
-if (process.env.BISQUE_GITHUB_OIDC === "1") {
-  if (!process.env.ACTIONS_ID_TOKEN_REQUEST_URL) {
-    fail(
-      "No bisque-api-key, so this publishes as the repository, and that needs the workflow to grant `permissions: id-token: write`.",
-    );
-  }
-  console.log(
-    `publishing as ${process.env.REPO} to its own channel (GitHub OIDC, no Bisque account)`,
+// This repository publishes itself, through the run's GitHub OIDC identity,
+// unless Bisque credentials are in the environment, which the skill prefers.
+// Checked before anything is installed or narrated, so a missing permission
+// costs seconds, not minutes.
+const withKey = Boolean(
+  process.env.BISQUE_API_KEY && process.env.BISQUE_USER_ID,
+);
+if (!withKey && !process.env.ACTIONS_ID_TOKEN_REQUEST_URL) {
+  fail(
+    "Publishing as this repository needs the workflow to grant `permissions: id-token: write`.",
   );
-} else if (!process.env.BISQUE_USER_ID) {
-  fail("bisque-api-key is set without bisque-user-id; pass both, or neither.");
 }
+console.log(
+  withKey
+    ? `publishing ${process.env.REPO} with the Bisque key in the environment`
+    : `publishing as ${process.env.REPO} to its own channel (GitHub OIDC, no Bisque account)`,
+);
 
 // The skill copy the agent could reach is not the one that runs here.
 run("node", [
@@ -57,8 +59,9 @@ run(bv, ["--version"]);
 
 // Visibility: an explicit input wins. Otherwise a public repository's
 // explainer is public, like the release it explains, and a private
-// repository's is unlisted, so copying the example unchanged never puts
-// private notes and diffs on a public channel.
+// repository's is private: only people who can open the repository on
+// GitHub can watch it, after signing in with GitHub. Copying the example
+// unchanged never puts private notes and diffs on a public channel.
 if (!visibility) {
   const isPrivate = ghJson([
     "repo",
@@ -67,7 +70,7 @@ if (!visibility) {
     "--json",
     "isPrivate",
   ]).isPrivate;
-  visibility = isPrivate ? "unlisted" : "public";
+  visibility = isPrivate ? "private" : "public";
   console.log(`visibility: ${visibility} (from repository visibility)`);
 }
 
@@ -82,14 +85,26 @@ const args = [
   process.env.SLUG || "",
   "--visibility",
   visibility,
+  // This step is the last one; nobody is left to fix what the agent missed,
+  // so a content problem publishes as a warning rather than losing the run.
+  "--best-effort",
 ];
 if (existsSync(join(out, "context.md"))) args.push("--context", "context.md");
-const r = spawnSync("node", [presentMjs, ...args], {
-  cwd: out,
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "inherit"],
-  maxBuffer: 64 * 1024 * 1024,
-});
+// One retry: what is left to fail is the network or the server, and a
+// republish of the same slug carries forward what already landed.
+const publish = () =>
+  spawnSync("node", [presentMjs, ...args], {
+    cwd: out,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+    maxBuffer: 64 * 1024 * 1024,
+  });
+let r = publish();
+if (r.status !== 0) {
+  warn(`publish exited with status ${r.status}; retrying once in 30 seconds`);
+  spawnSync("sleep", ["30"]);
+  r = publish();
+}
 if (r.status !== 0) fail(`publish exited with status ${r.status}`);
 let res;
 try {

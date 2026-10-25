@@ -19,8 +19,11 @@ import { lintPresentation } from "../scripts/present.mjs";
  * So the lint refuses the publish before synthesis starts.
  */
 
+// Both layout blocks, empty, so a fixture is about the one thing it tests.
+const LAYOUTS = '<i data-layout="landscape"></i><i data-layout="vertical"></i>';
+
 const slide = (notes, body) =>
-  `<div class="slides"><section id="s2">${body}<aside class="notes">${notes}</aside></section></div>`;
+  `<div class="slides"><section id="s2">${LAYOUTS}${body}<aside class="notes">${notes}</aside></section></div>`;
 
 describe("reveal coverage", () => {
   test("a stepped element no marker names fails the lint", () => {
@@ -117,6 +120,7 @@ describe("reveal coverage", () => {
   test("a slide with no notes is exempt", () => {
     const problems = lintPresentation(
       '<div class="slides"><section id="s2">' +
+        LAYOUTS +
         '<p data-step="1" data-cue-target="a">Manual</p>' +
         "</section></div>",
     );
@@ -160,7 +164,7 @@ describe("reveal coverage", () => {
  *  called 12 working presentations broken. */
 describe("advance-driven slides", () => {
   const slide = (notes, body) =>
-    `<div class="slides"><section id="s2">${body}<aside class="notes">${notes}</aside></section></div>`;
+    `<div class="slides"><section id="s2">${LAYOUTS}${body}<aside class="notes">${notes}</aside></section></div>`;
 
   test("bare data-step with <<advance>> is not a defect", () => {
     const problems = lintPresentation(

@@ -15,6 +15,7 @@ Source material, all in `source/`:
 - `source/release.md` — the release name, tag, and the notes the maintainers wrote
 - `source/changes.md` — the commits and changed files since the previous release
 - `source/diff.patch` — the diff since the previous release, capped in size
+- `source/design.md` — the repository's own design system, when it keeps one
 
 Tell the story the maintainers told. Quote the release notes and the diff
 rather than inventing around them. Lead with what a user notices: a new
@@ -52,6 +53,11 @@ asks for that is easy to skip: let the composition change with what each
 slide is saying, so two slides in a row with the same skeleton means one of
 them was not designed.
 
+When `source/design.md` exists, it is how this project already looks: its
+colors, type, spacing and voice. Read it before you choose anything, and build
+the presentation in that system rather than inventing a look beside it. It
+decides the look only; the 21 px floor and the format contract still hold.
+
 ## What to write
 
 - `out/index.html` — the presentation
@@ -64,6 +70,31 @@ You have a shell and internet access: download every font and image you use
 into `out/assets/` and reference them relatively, as the contract requires.
 Keep scratch files inside this directory rather than in `/tmp`. Do not run any code
 from the release. Do not write anywhere except `out/`.
+
+## Check before you stop
+
+If you have a shell, run these two commands from this directory once
+`out/index.html` is written, and fix what they report. Both only read.
+
+1. `node {{PRESENT}} plan --html out/index.html` prints what each slide will
+   say and every problem that would stop publishing, such as a step that
+   nothing in the narration reveals. Fix every problem and run it again until
+   it reports none.
+2. `node {{PRESENT}} pronunciation-report --html out/index.html --voice {{VOICE}}`
+   shows how the voice will say each word. Follow the skill's "Check
+   pronunciations before synthesizing" section. Take every word with
+   `inLexicon: false` one at a time: sound out its `respelled` value letter
+   by letter, and ask whether a person would say it that way. A guessed
+   pronunciation is often wrong for a compound written as one word, a code
+   identifier, or a product name; `signup` respelled `SIHGNUHP` is "sig-nup",
+   not "sign-up". Judge short capitals like `US` or `API` the same way. Mark
+   each word the voice would say wrong and run the report again to confirm.
+   The first run downloads the voice, about a minute.
+
+   In your last message, list every `inLexicon: false` word with its
+   respelling and your verdict: right, or marked as what.
+
+If either command cannot run, say so in your last message.
 
 When `out/index.html` passes the contract's own "Checklist before you finish",
 stop. Do not print the document to stdout. Do not publish anything; the job

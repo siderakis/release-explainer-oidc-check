@@ -19,9 +19,17 @@
 // set network: deny, which costs custom typography and any image the agent
 // would have fetched.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
-import { fail, workDir } from "./action-step.ts";
+import { fail, output, warn, workDir } from "./action-step.ts";
+import { cleanReason, SKIP_FILE } from "./judgment.ts";
 import { providerOf } from "./model-provider.ts";
 
 const work = workDir();
@@ -58,6 +66,17 @@ if (network === "deny") {
  * settings and skills from $WORK only, never a self-hosted runner's own
  * ~/.claude, and HOME is a fresh directory for the same reason.
  */
+// The engine for the skill's checks, installed by the step before this one,
+// and the runner's real model directory, so a voice the check downloads is
+// the one publish narrates with and the cache saves. Claude Code runs with a
+// fresh HOME, which would otherwise hide both.
+const voiceEnv = {
+  BISQUE_VOICE_BIN:
+    process.env.BISQUE_VOICE ??
+    join(process.env.HOME ?? "", ".bisque", "bin", "bisque-voice"),
+  BISQUE_VOICE_MODEL_DIR: join(process.env.HOME ?? "", ".bisque", "models"),
+};
+
 function runClaudeCode(): number | null {
   const skills = join(work, ".claude", "skills");
   rmSync(skills, { recursive: true, force: true });
@@ -104,6 +123,7 @@ function runClaudeCode(): number | null {
       CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-placeholder-held-by-key-proxy",
       DISABLE_AUTOUPDATER: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      ...voiceEnv,
     },
     stdio: ["ignore", "inherit", "inherit"],
     maxBuffer: 256 * 1024 * 1024,
@@ -179,6 +199,7 @@ const r = spawnSync("opencode", args, {
     OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
     OPENCODE_PERMISSION: JSON.stringify(permission),
     OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
+    ...voiceEnv,
   },
   stdio: ["ignore", "inherit", "inherit"],
   maxBuffer: 256 * 1024 * 1024,
@@ -190,12 +211,33 @@ checkOutput();
 
 // Either harness exits 0 when the model finishes its turn, whether or not it
 // did the job, so the output is what decides.
+//
+// Under `when: judged` the model may decline instead: out/skipped.txt and no
+// out/index.html. That ends the step green with `skipped=true`, and the
+// later steps post the reason rather than publish. A presentation wins over
+// a stray skip file, and a run that wrote neither failed.
 function checkOutput(): void {
   const html = join(work, "out", "index.html");
-  if (!existsSync(html) || statSync(html).size === 0) {
+  const skip = join(work, "out", SKIP_FILE);
+  const wroteHtml = existsSync(html) && statSync(html).size > 0;
+  if (process.env.MODE === "judged" && existsSync(skip)) {
+    if (wroteHtml) {
+      warn(
+        `${model} wrote both out/index.html and out/${SKIP_FILE}; publishing the presentation.`,
+      );
+    } else {
+      const reason = cleanReason(readFileSync(skip, "utf8"));
+      output("skipped", "true");
+      output("skip-reason", reason);
+      console.log(`::notice::Skipped: ${reason}`);
+      return;
+    }
+  }
+  if (!wroteHtml) {
     fail(
       "The agent finished without writing out/index.html. See the log above for what it did instead.",
     );
   }
+  output("skipped", "false");
   console.log(`${model} wrote out/index.html (${statSync(html).size} bytes)`);
 }

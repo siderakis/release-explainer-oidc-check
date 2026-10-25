@@ -1,8 +1,9 @@
-name: Release Explainer
+name: Pull Request Explainer
 description: >-
-  Narrated explainer of every release, made by the model you already pay for
-  and posted where the release is read. Bring your own key or your Claude
-  plan; no Bisque account needed. Also explains pull requests.
+  A watchable explainer of your pull requests, made by the model you already
+  pay for and linked in a comment. Mention @bisque-cloud, or let it pick the
+  ones worth explaining. Bring your own key or your Claude plan; no Bisque
+  account needed. Also explains releases.
 author: Bisque
 branding:
   icon: play-circle
@@ -81,35 +82,44 @@ inputs:
     description: Explain this pull request number instead of the one in the event. For manual runs.
     required: false
     default: ""
-
-  bisque-api-key:
+  when:
     description: >-
-      Optional. Without it the explainer publishes to this repository's own
-      channel, bisque.today/p/{owner}/{repo}, using the GitHub-signed identity
-      of the workflow run (it needs `permissions: id-token: write`). The
-      repository's owner claims that channel by signing in with GitHub. With a
-      Bisque agent API key it publishes to that account instead; pair it with
-      bisque-user-id.
+      `always` (default) explains every pull request the workflow runs for.
+      `judged` has the model decide first whether the pull request is worth
+      explaining to someone who did not write it; when it is not, nothing is
+      published or commented, and the reason is in the run's log. Applies
+      only to runs started by a `pull_request` or `pull_request_target`
+      event: a mention or a manual run always explains, because somebody
+      asked.
+    required: false
+    default: "always"
+
+  presentation:
+    description: >-
+      Publish a presentation an earlier job already wrote, instead of writing
+      one: the folder holding its index.html and, optionally, context.md and
+      assets/. For a workflow that authors with anthropics/claude-code-action
+      and the presenter plugin, which cannot publish from inside Claude's
+      session. No model runs and no key is needed; this step narrates,
+      publishes and posts the link. Run it in its own job, after the one that
+      wrote the folder, so nothing the agent touched runs with the publishing
+      identity. A relative path is read from the workspace.
     required: false
     default: ""
-  bisque-user-id:
-    description: The Bisque user id that owns bisque-api-key.
-    required: false
-    default: ""
+
   voice:
     description: >-
-      A bisque-voice voice id, engine-qualified, like kokoro:af_heart. Narration
-      runs on this runner. Empty uses the voice saved for the channel, else the
-      account, on bisque.cloud, and kokoro:af_heart when neither saved one.
-      If bisque.cloud cannot be read, the run fails rather than guess a voice.
-      Whatever engine that names is downloaded on the first run and cached; a
+      The voice that narrates, engine-qualified, like kokoro:am_michael.
+      Empty narrates in kokoro:af_heart. Narration runs on this runner, and
+      whatever engine this names is downloaded on the first run and cached; a
       Studio voice (qwen3-*) is a multi-gigabyte download.
     required: false
     default: ""
   visibility:
     description: >-
-      public or unlisted. Empty means public for a public repository and
-      unlisted for a private one, so private notes never land on a public
+      public, unlisted or private. Empty means public for a public repository
+      and private for a private one, which only people who can open the
+      repository on GitHub can watch, so private notes never land on a public
       channel by default.
     required: false
     default: ""
@@ -125,6 +135,14 @@ outputs:
   presentation-id:
     description: The presentation id, for analytics and republishing.
     value: ${{ steps.publish.outputs.presentation-id }}
+  skipped:
+    description: >-
+      `true` when `when: judged` decided against an explainer. The run still
+      succeeds, and nothing is published.
+    value: ${{ steps.agent.outputs.skipped }}
+  skip-reason:
+    description: The one sentence the model gave for skipping. It is not posted on the pull request.
+    value: ${{ steps.agent.outputs.skip-reason }}
 
 runs:
   using: composite
@@ -144,6 +162,9 @@ runs:
         SOURCE: ${{ inputs.source }}
         TAG_INPUT: ${{ inputs.tag }}
         PR_INPUT: ${{ inputs.pull-request }}
+        WHEN: ${{ inputs.when }}
+        EVENT_NAME: ${{ github.event_name }}
+        VOICE: ${{ inputs.voice }}
         EVENT_PATH: ${{ github.event_path }}
         REPO: ${{ github.repository }}
         WORK: ${{ runner.temp }}/release-explainer
@@ -152,7 +173,7 @@ runs:
 
     # Recorded before the agent runs. The publish step refuses a skill whose
     # hash no longer matches, so nothing the agent edited runs with the
-    # Bisque credential.
+    # repository's GitHub identity.
     - name: Snapshot the skill
       id: skill
       shell: bash
@@ -163,10 +184,13 @@ runs:
     # The only step that holds the provider key. It hands the key to a local
     # proxy over stdin and exits, so the agent step below runs with no key in
     # its environment and none in any process environment it can read.
+    # On a pull request with no key, it passes and says so instead, and the
+    # steps that need a model are skipped: the last step posts the note.
     - name: Start the key proxy
       id: proxy
       shell: bash
       env:
+        SOURCE: ${{ inputs.source }}
         MODEL: ${{ inputs.model }}
         VARIANT: ${{ inputs.variant }}
         CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude-code-oauth-token }}
@@ -194,8 +218,31 @@ runs:
         CLAUDE_CODE_VERSION: ${{ inputs.claude-code-version }}
       run: npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
+    # Before the agent, which downloads the voice the first time it checks
+    # pronunciations. Restore and save are split because the voice is not
+    # known until publish resolves it from the account, so the saved key is
+    # named after the models actually installed, not after an input that may
+    # be empty.
+    - name: Restore the speech models
+      id: models-cache
+      if: steps.proxy.outputs.missing-key != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.bisque/models
+        key: bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-v2
+        restore-keys: |
+          bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-
+
+    # The agent runs the skill's own checks (plan, pronunciation-report)
+    # before it stops, and both need the engine. Publish reuses this binary.
+    - name: Install bisque-voice
+      if: steps.proxy.outputs.missing-key != 'true'
+      shell: bash
+      run: node "${{ github.action_path }}/action/src/install-bisque-voice.ts"
+
     - name: Author with ${{ steps.proxy.outputs.model }}
       id: agent
+      if: steps.proxy.outputs.missing-key != 'true'
       shell: bash
       env:
         MODEL: ${{ steps.proxy.outputs.model }}
@@ -203,6 +250,7 @@ runs:
         BASE_PATH: ${{ steps.proxy.outputs.base-path }}
         NETWORK: ${{ inputs.network }}
         SOURCE: ${{ inputs.source }}
+        MODE: ${{ steps.source.outputs.mode }}
         PROXY_PORT: ${{ steps.proxy.outputs.port }}
         ACTION_PATH: ${{ github.action_path }}
         WORK: ${{ runner.temp }}/release-explainer
@@ -222,33 +270,24 @@ runs:
         WORK: ${{ runner.temp }}/release-explainer
       run: node "${{ github.action_path }}/action/src/key-proxy-lifecycle.ts" stop
 
+    # A skipped run (`when: judged`) wrote no presentation, so there is
+    # nothing to check, publish or comment. Neither did a run with no key;
+    # the last step posts a setup note for it instead.
     - name: Check the presentation
+      if: steps.agent.outputs.skipped != 'true' && steps.proxy.outputs.missing-key != 'true'
       shell: bash
       env:
         WORK: ${{ runner.temp }}/release-explainer
       run: node "${{ github.action_path }}/action/src/check-presentation-structure.ts" "$WORK/out"
 
-    # Restore and save are split because the voice is not known until publish
-    # resolves it from the account, so the saved key is named after the models
-    # actually installed, not after an input that may be empty.
-    - name: Restore the speech models
-      id: models-cache
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ~/.bisque/models
-        key: bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-v2
-        restore-keys: |
-          bisque-voice-models-${{ runner.os }}-${{ runner.arch }}-
-
     - name: Narrate on this runner and publish
       id: publish
+      if: steps.agent.outputs.skipped != 'true' && steps.proxy.outputs.missing-key != 'true'
       shell: bash
       env:
-        BISQUE_API_KEY: ${{ inputs.bisque-api-key }}
-        BISQUE_USER_ID: ${{ inputs.bisque-user-id }}
-        # No Bisque key: publish as this repository, with the run's GitHub
-        # identity, to bisque.today/p/{owner}/{repo}.
-        BISQUE_GITHUB_OIDC: ${{ inputs.bisque-api-key == '' && '1' || '' }}
+        # Publish as this repository, with the run's GitHub identity, to
+        # bisque.today/p/{owner}/{repo}. No Bisque account or key.
+        BISQUE_GITHUB_OIDC: "1"
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
         ACTION_PATH: ${{ github.action_path }}
@@ -260,12 +299,15 @@ runs:
         SLUG: ${{ steps.source.outputs.slug }}
       run: node "${{ github.action_path }}/action/src/narrate-and-publish.ts"
 
+    # A run that narrated nothing (a skipped pull request, or a failure before
+    # narration on a runner with no cached voice) has no models folder. That
+    # names no models, so nothing is saved, rather than failing the job.
     - name: Name the installed speech models
       id: models
       if: always()
       shell: bash
       run: |
-        key=$(cd ~/.bisque/models 2>/dev/null && ls -d */ 2>/dev/null | tr -d / | sort | paste -sd+ -)
+        key=$(cd ~/.bisque/models 2>/dev/null && ls -d */ 2>/dev/null | tr -d / | sort | paste -sd+ -) || key=""
         echo "key=$key" >> "$GITHUB_OUTPUT"
 
     - name: Save the speech models
@@ -298,8 +340,10 @@ runs:
         PR_NUMBER: ${{ steps.source.outputs.pr-number }}
         TITLE: ${{ steps.source.outputs.title }}
         WATCH_URL: ${{ steps.publish.outputs.watch-url }}
+        SKIPPED: ${{ steps.agent.outputs.skipped }}
+        SKIP_REASON: ${{ steps.agent.outputs.skip-reason }}
+        MISSING_KEY: ${{ steps.proxy.outputs.missing-key }}
         PRESENTATION_ID: ${{ steps.publish.outputs.presentation-id }}
-        # Whose storage the poster image is under: the account, or the
-        # repository channel's principal.
-        BISQUE_USER_ID: ${{ inputs.bisque-api-key != '' && inputs.bisque-user-id || format('github-repo-{0}', github.repository_id) }}
+        # Whose storage the poster image is under: the repository channel's.
+        BISQUE_USER_ID: github-repo-${{ github.repository_id }}
       run: node "${{ github.action_path }}/action/src/post-watch-link.ts"

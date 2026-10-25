@@ -2,9 +2,17 @@
 // notes, or a comment on the pull request. Rerunning replaces the previous
 // line or comment, so a second run for the same tag or pull request does
 // not add a second link.
+//
+// A pull request the model judged not worth explaining (`when: judged`) gets
+// no comment: the reason stays in the run's log and its `skip-reason` output.
+// A pull request whose run had no provider key gets one comment naming the
+// secret to add, under the same marker, so a later run edits it rather than
+// adding another.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { gh, ghJson } from "./github-cli.ts";
+import { gh, ghJson, ghMaybe } from "./github-cli.ts";
+import { planComment } from "./judgment.ts";
+import { secretFor, setupComment, workflowPath } from "./missing-key.ts";
 
 const MARKER = "<!-- release-explainer -->";
 const repo = process.env.REPO ?? "";
@@ -51,6 +59,26 @@ export function appendLine(
   return `${kept}\n\n${marker}\n\n${text}\n`;
 }
 
+/** The missing-key note, naming the secret this run's workflow passes. */
+function setupNote(): string {
+  const path = workflowPath(process.env.GITHUB_WORKFLOW_REF ?? "", repo);
+  const sha = process.env.GITHUB_WORKFLOW_SHA ?? "";
+  const workflow = path
+    ? ghMaybe([
+        "api",
+        `repos/${repo}/contents/${path}${sha ? `?ref=${sha}` : ""}`,
+        "-H",
+        "Accept: application/vnd.github.raw",
+      ])
+    : null;
+  return setupComment({
+    ...secretFor(workflow),
+    repo,
+    server: process.env.GITHUB_SERVER_URL,
+    runId: process.env.GITHUB_RUN_ID,
+  });
+}
+
 if (process.env.SOURCE === "release") {
   const tag = process.env.TAG ?? "";
   const current = ghJson<{ body: string | null }>([
@@ -68,25 +96,41 @@ if (process.env.SOURCE === "release") {
   console.log(`Appended to release ${tag}: ${watchUrl}`);
 } else if (process.env.SOURCE === "pull-request") {
   const number = process.env.PR_NUMBER ?? "";
-  const body = `${MARKER}\n${line}`;
-  const comments = ghJson<Array<{ id: number; body?: string }>>([
-    "api",
-    `repos/${repo}/issues/${number}/comments`,
-    "--paginate",
-  ]);
-  const existing = comments.find((c) => (c.body ?? "").startsWith(MARKER));
-  if (existing) {
-    gh([
-      "api",
-      "-X",
-      "PATCH",
-      `repos/${repo}/issues/comments/${existing.id}`,
-      "-f",
-      `body=${body}`,
-    ]);
-    console.log(`Updated comment ${existing.id} on #${number}: ${watchUrl}`);
+  const missingKey = process.env.MISSING_KEY === "true";
+  if (process.env.SKIPPED === "true" && !missingKey) {
+    console.log(`Skipped #${number}; left no comment.`);
   } else {
-    gh(["pr", "comment", number, "-R", repo, "--body", body]);
-    console.log(`Commented on #${number}: ${watchUrl}`);
+    const body = missingKey
+      ? `${MARKER}\n${setupNote()}`
+      : `${MARKER}\n${line}`;
+    const what = missingKey ? "setup note" : watchUrl;
+    const comments = ghJson<Array<{ id: number; body?: string }>>([
+      "api",
+      `repos/${repo}/issues/${number}/comments`,
+      "--paginate",
+    ]);
+    const existing = comments.find((c) => (c.body ?? "").startsWith(MARKER));
+    const plan = planComment(
+      existing ? (existing.body ?? "") : null,
+      missingKey,
+    );
+    if (plan === "keep") {
+      console.log(
+        `No key for #${number}; left its existing explainer comment ${existing?.id} in place.`,
+      );
+    } else if (plan === "update" && existing) {
+      gh([
+        "api",
+        "-X",
+        "PATCH",
+        `repos/${repo}/issues/comments/${existing.id}`,
+        "-f",
+        `body=${body}`,
+      ]);
+      console.log(`Updated comment ${existing.id} on #${number}: ${what}`);
+    } else {
+      gh(["pr", "comment", number, "-R", repo, "--body", body]);
+      console.log(`Commented on #${number}: ${what}`);
+    }
   }
 }

@@ -1,6 +1,7 @@
 // Step: gather what the agent explains into $WORK/source/, plus TASK.md
 // and the pre-fetched format spec. Reads through the API with the job's
 // token. Never checks out the code.
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -11,6 +12,7 @@ import {
 import { fail, output, run, workDir } from "./action-step.ts";
 import { gh, ghJson } from "./github-cli.ts";
 import { previousRelease, slugify } from "./release-history.ts";
+import { resolveMode } from "./judgment.ts";
 
 const work = workDir();
 const src = join(work, "source");
@@ -20,6 +22,69 @@ mkdirSync(join(work, "out"), { recursive: true });
 const repo = process.env.REPO;
 const source = process.env.SOURCE || "release";
 const here = new URL(".", import.meta.url).pathname;
+
+// `when: judged` on an automatic pull request run puts the decision in front
+// of the task; every other run explains, as it always has.
+const resolved = resolveMode(process.env.WHEN, source, process.env.EVENT_NAME);
+if ("error" in resolved) fail(resolved.error);
+const mode = resolved.mode;
+output("mode", mode);
+
+// The skill script the agent runs its checks with, and the voice it checks
+// pronunciations for: the `voice` input, else the voice publish falls back to.
+const presentMjs = join(
+  here,
+  "..",
+  "..",
+  "skills",
+  "present",
+  "scripts",
+  "present.mjs",
+);
+const checkVoice = process.env.VOICE || "kokoro:af_heart";
+
+/** A prompt file with its placeholders filled in, as TASK.md. */
+function task(file: string, repo: string): string {
+  return readFileSync(join(here, file), "utf8")
+    .replaceAll("{{REPO}}", repo)
+    .replaceAll("{{PRESENT}}", presentMjs)
+    .replaceAll("{{VOICE}}", checkVoice)
+    .replaceAll(
+      "{{JUDGE}}",
+      mode === "judged"
+        ? readFileSync(join(here, "prompt-pull-request-judge.md"), "utf8")
+        : "",
+    );
+}
+/**
+ * The repository's own design system, when it keeps one at its root, as
+ * source/design.md: read at `ref`, the commit being explained, so a change
+ * to it shows up as itself. Absent is the common case and not an error.
+ */
+function gatherDesign(repo: string, ref: string): void {
+  for (const path of ["DESIGN.md", "design.md"]) {
+    try {
+      const body = execFileSync(
+        "gh",
+        [
+          "api",
+          `repos/${repo}/contents/${path}?ref=${encodeURIComponent(ref)}`,
+          "-H",
+          "Accept: application/vnd.github.raw",
+        ],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      );
+      if (body.trim()) {
+        writeFileSync(join(src, "design.md"), body);
+        console.log(`Design system: ${path} at ${ref.slice(0, 12)}`);
+        return;
+      }
+    } catch {
+      // Not there; try the next spelling.
+    }
+  }
+}
+
 const event = process.env.EVENT_PATH
   ? JSON.parse(readFileSync(process.env.EVENT_PATH, "utf8"))
   : {};
@@ -120,13 +185,8 @@ if (source === "release") {
     writeFileSync(join(src, "diff.patch"), "");
   }
 
-  writeFileSync(
-    join(work, "TASK.md"),
-    readFileSync(join(here, "prompt-release.md"), "utf8").replaceAll(
-      "{{REPO}}",
-      repo,
-    ),
-  );
+  gatherDesign(repo, tag);
+  writeFileSync(join(work, "TASK.md"), task("prompt-release.md", repo));
   output("title", name);
   output("slug", slugify(tag));
   output("tag", tag);
@@ -148,7 +208,7 @@ if (source === "release") {
     "-R",
     repo,
     "--json",
-    "title,body,author,mergedAt,labels,files,url,number",
+    "title,body,author,mergedAt,labels,files,url,number,headRefOid",
   ]);
   writeFileSync(
     join(src, "pr.md"),
@@ -197,18 +257,15 @@ if (source === "release") {
   }
   writeFileSync(join(src, "comments.md"), comments);
 
-  writeFileSync(
-    join(work, "TASK.md"),
-    readFileSync(join(here, "prompt-pull-request.md"), "utf8").replaceAll(
-      "{{REPO}}",
-      repo,
-    ),
-  );
+  gatherDesign(repo, pr.headRefOid);
+  writeFileSync(join(work, "TASK.md"), task("prompt-pull-request.md", repo));
   output("title", pr.title);
   output("slug", `pr-${number}-${slugify(pr.title)}`);
   output("tag", "");
   output("pr-number", number);
-  console.log(`Pull request: #${number} ${pr.title}`);
+  console.log(
+    `Pull request: #${number} ${pr.title}${mode === "judged" ? " (the model decides whether to explain it)" : ""}`,
+  );
 } else {
   fail(`source must be 'release' or 'pull-request', got '${source}'.`);
 }

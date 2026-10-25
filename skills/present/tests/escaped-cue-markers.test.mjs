@@ -16,8 +16,11 @@ import { lintPresentation } from "../scripts/present.mjs";
  * So the lint refuses the publish before synthesis starts.
  */
 
+// Both layout blocks, empty, so a fixture is about the one thing it tests.
+const LAYOUTS = '<i data-layout="landscape"></i><i data-layout="vertical"></i>';
+
 const slide = (notes, body = "<h1>Title</h1>") =>
-  `<div class="slides"><section id="s2">${body}<aside class="notes">${notes}</aside></section></div>`;
+  `<div class="slides"><section id="s2">${LAYOUTS}${body}<aside class="notes">${notes}</aside></section></div>`;
 
 describe("escaped cue markers", () => {
   test("an escaped reveal fails the lint, naming the slide and the marker", () => {

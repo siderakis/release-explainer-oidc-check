@@ -1,4 +1,14 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // post-watch-link.ts runs its step on import, so the pure functions are
 // loaded with the step env pointed at nothing.
@@ -64,4 +74,47 @@ test("notes that merely mention the phrase survive", () => {
       BLOCK,
     ),
   ).toContain("See the explainer below.");
+});
+
+// The pull request branch runs against a stand-in `gh` that records every
+// call and answers the comment listing with an empty array.
+function runPullRequestStep(skipped: boolean): string {
+  const dir = mkdtempSync(join(tmpdir(), "post-watch-link-"));
+  const log = join(dir, "calls.log");
+  writeFileSync(
+    join(dir, "gh"),
+    `#!/bin/sh\necho "$*" >> "${log}"\necho "[]"\n`,
+  );
+  chmodSync(join(dir, "gh"), 0o755);
+  const run = spawnSync(
+    process.execPath,
+    [join(import.meta.dir, "post-watch-link.ts")],
+    {
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH}`,
+        SOURCE: "pull-request",
+        REPO: "o/r",
+        PR_NUMBER: "7",
+        WATCH_URL: "https://bisque.today/p/o/r/v1",
+        SKIPPED: String(skipped),
+        SKIP_REASON: "It only bumps lodash from 4.17.20 to 4.17.21.",
+      },
+    },
+  );
+  expect(run.status).toBe(0);
+  return existsSync(log) ? readFileSync(log, "utf8") : "";
+}
+
+test("a skipped pull request gets no comment, and its comments are not read", () => {
+  expect(runPullRequestStep(true)).toBe("");
+});
+
+test("an explained pull request gets the watch link as a comment", () => {
+  const calls = runPullRequestStep(false);
+  expect(calls).toStartWith("api repos/o/r/issues/7/comments");
+  expect(calls).toContain(
+    "\npr comment 7 -R o/r --body <!-- release-explainer -->",
+  );
+  expect(calls).toContain("(https://bisque.today/p/o/r/v1)");
 });
