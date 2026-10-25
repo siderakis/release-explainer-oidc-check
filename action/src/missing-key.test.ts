@@ -75,3 +75,16 @@ test("the note replaces an earlier note or skip, never a watch link", () => {
   // Once the secret is set, the explainer replaces the note.
   expect(planComment(note, false)).toBe("update");
 });
+
+test("a refused secret gets the same fix, saying it was refused", () => {
+  const body = setupComment({
+    provider: "claude-code",
+    secret: "CLAUDE_CODE_OAUTH_TOKEN",
+    repo: "acme/widgets",
+    refused: true,
+  });
+  expect(body).toStartWith("<!-- release-explainer: setup -->\n");
+  expect(body).toContain(
+    "**No explainer yet: the `CLAUDE_CODE_OAUTH_TOKEN` secret was refused (expired or revoked).** A maintainer can run `claude setup-token`",
+  );
+});

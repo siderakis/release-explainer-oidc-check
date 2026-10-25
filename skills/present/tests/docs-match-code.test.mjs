@@ -36,7 +36,9 @@ function flagsReadByCode(source) {
   for (const m of source.matchAll(/flags\.([a-z][a-zA-Z0-9]*)/g)) {
     found.add(m[1]);
   }
-  for (const m of source.matchAll(/flags\[\s*["']([a-z][a-z0-9-]*)["']\s*\]/g)) {
+  for (const m of source.matchAll(
+    /flags\[\s*["']([a-z][a-z0-9-]*)["']\s*\]/g,
+  )) {
     found.add(m[1]);
   }
   return found;

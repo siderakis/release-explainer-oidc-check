@@ -100,12 +100,13 @@ inputs:
       one: the folder holding its index.html and, optionally, context.md,
       assets/ and the audio/ the skill's `narrate` wrote. For a workflow that
       authors with anthropics/claude-code-action and the presenter plugin,
-      which cannot publish from inside Claude's session. No model runs and no
-      key is needed; this step publishes the narration the earlier job made in
-      `voice`, narrates only the slides it lacks, and posts the link. Run it
-      in its own job, after the one that
-      wrote the folder, so nothing the agent touched runs with the publishing
-      identity. A relative path is read from the workspace.
+      which cannot publish from inside Claude's session, so Claude writes,
+      checks and narrates there. No model runs and no key is needed; this
+      step publishes that narration in the voice and speed it was made in,
+      narrates only slides it lacks, and posts the link. Run it in its own
+      job, after the one that wrote the folder, so nothing the agent touched
+      runs with the publishing identity. A relative path is read from the
+      workspace.
     required: false
     default: ""
 
@@ -145,6 +146,13 @@ outputs:
   skip-reason:
     description: The one sentence the model gave for skipping. It is not posted on the pull request.
     value: ${{ steps.agent.outputs.skip-reason }}
+  refused:
+    description: >-
+      On a pull request, `auth` when the provider refused the key (expired or
+      revoked) and `limit` when the plan or account was out of quota. The run
+      still succeeds, with a warning, and nothing is published. `auth` leaves
+      a note naming the secret; `limit` leaves no comment. Empty otherwise.
+    value: ${{ steps.agent.outputs.refused }}
 
 runs:
   using: composite
@@ -226,10 +234,11 @@ runs:
     # pronunciations. Restore and save are split because the voice is not
     # known until publish resolves it from the account, so the saved key is
     # named after the models actually installed, not after an input that may
-    # be empty.
+    # be empty. A `presentation` arrives narrated, so its publish needs no
+    # model unless the earlier job left slides without audio.
     - name: Restore the speech models
       id: models-cache
-      if: steps.proxy.outputs.missing-key != 'true'
+      if: inputs.presentation == '' && steps.proxy.outputs.missing-key != 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bisque/models
@@ -277,6 +286,7 @@ runs:
     # Publish-only: the folder an earlier job wrote stands where the agent's
     # output would, so the checks and the publish below treat it the same.
     - name: Take the presentation an earlier job wrote
+      id: take
       if: inputs.presentation != ''
       shell: bash
       env:
@@ -285,10 +295,14 @@ runs:
       run: node "${{ github.action_path }}/action/src/take-presentation.ts"
 
     # A skipped run (`when: judged`) wrote no presentation, so there is
-    # nothing to check, publish or comment. Neither did a run with no key;
-    # the last step posts a setup note for it instead.
+    # nothing to check, publish or comment. Neither did a run with no key, or
+    # one the provider refused; the last step decides what, if anything, to
+    # say on the pull request. A `presentation` was checked by the skill's
+    # `plan` and `narrate` in the job that wrote it, where a problem could
+    # still be fixed; this check is for this Action's own agent, whose prompt
+    # asks for more than the format does.
     - name: Check the presentation
-      if: steps.agent.outputs.skipped != 'true' && steps.proxy.outputs.missing-key != 'true'
+      if: inputs.presentation == '' && steps.agent.outputs.skipped != 'true' && steps.agent.outputs.refused == '' && steps.proxy.outputs.missing-key != 'true'
       shell: bash
       env:
         WORK: ${{ runner.temp }}/release-explainer
@@ -296,7 +310,7 @@ runs:
 
     - name: Narrate on this runner and publish
       id: publish
-      if: steps.agent.outputs.skipped != 'true' && steps.proxy.outputs.missing-key != 'true'
+      if: steps.agent.outputs.skipped != 'true' && steps.agent.outputs.refused == '' && steps.proxy.outputs.missing-key != 'true'
       shell: bash
       env:
         # Publish as this repository, with the run's GitHub identity, to
@@ -306,7 +320,10 @@ runs:
         REPO: ${{ github.repository }}
         ACTION_PATH: ${{ github.action_path }}
         EXPECTED_HASH: ${{ steps.skill.outputs.hash }}
-        VOICE: ${{ inputs.voice }}
+        # The voice input wins; else a `presentation` publishes in the voice
+        # and speed its narration was made in, so that audio ships as judged.
+        VOICE: ${{ inputs.voice || steps.take.outputs.voice }}
+        SPEED: ${{ inputs.voice == '' && steps.take.outputs.speed || '' }}
         VISIBILITY: ${{ inputs.visibility }}
         WORK: ${{ runner.temp }}/release-explainer
         TITLE: ${{ steps.source.outputs.title }}
@@ -357,6 +374,7 @@ runs:
         SKIPPED: ${{ steps.agent.outputs.skipped }}
         SKIP_REASON: ${{ steps.agent.outputs.skip-reason }}
         MISSING_KEY: ${{ steps.proxy.outputs.missing-key }}
+        REFUSED: ${{ steps.agent.outputs.refused }}
         PRESENTATION_ID: ${{ steps.publish.outputs.presentation-id }}
         # Whose storage the poster image is under: the repository channel's.
         BISQUE_USER_ID: github-repo-${{ github.repository_id }}

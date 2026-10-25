@@ -6,12 +6,13 @@
 #
 # Two jobs, because Claude's session cannot publish: claude-code-action
 # removes the variables that mint the run's GitHub identity before Claude
-# starts. So Claude writes the explainer with the presenter plugin, narrates
-# it on the runner and judges the narration, and a second job, on a fresh
-# runner, publishes that folder and its audio to this repository's own
-# channel, bisque.today/p/{owner}/{repo}, and comments. Only that job holds
-# `id-token: write`, the same split PyPI's trusted publishing and GitHub
-# Pages use between building and publishing.
+# starts. So Claude does everything up to publishing with the presenter
+# plugin, where it can still fix what the checks find: it writes the
+# explainer, checks it, narrates it on the runner and judges the narration.
+# A second job, on a fresh runner, only publishes that folder and its audio
+# to this repository's own channel, bisque.today/p/{owner}/{repo}, and
+# comments. Only that job holds `id-token: write`, the same split PyPI's
+# trusted publishing and GitHub Pages use between building and publishing.
 #
 # One secret: CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`, which the
 # repository already has if it runs claude-code-action on a Claude plan. No
@@ -24,11 +25,6 @@ name: Pull request explainer
 on:
   pull_request:
     types: [opened, ready_for_review, reopened]
-
-env:
-  # Claude narrates in this voice, and the publish job names the same one, so
-  # it uploads that narration instead of narrating again.
-  VOICE: kokoro:af_heart
 
 jobs:
   write:
@@ -48,8 +44,8 @@ jobs:
           github_token: ${{ github.token }}
           plugin_marketplaces: ./
           plugins: presenter@bisque-cloud
-          # The skill downloads its speech engine and runs its own checks
-          # with node, so Claude needs a shell, file writes and the web.
+          # The skill downloads its speech engine, narrates and runs its own
+          # checks with node, so Claude needs a shell, file writes and the web.
           claude_args: >-
             --allowedTools Bash,Read,Write,Edit,Glob,Grep,WebFetch,Skill
             --max-turns 150
@@ -64,7 +60,7 @@ jobs:
             index.html and context.md in ${{ runner.temp }}/explainer. Run
             every step of the skill up to, not including, `publish`: the
             spec, the presentation, `plan`, then `pronunciation-report` and
-            `narrate`, both with `--voice ${{ env.VOICE }}`. Judge the
+            `narrate`, both with `--voice kokoro:af_heart`. Judge the
             narration `narrate` reports, fix what it and the other checks
             find, and run them again until they are clean. Leave `audio/` in
             the folder. Do not run `login` or `publish`; the next job
@@ -92,8 +88,9 @@ jobs:
           name: explainer
           path: explainer
 
+      # Publishes in the voice the audio was narrated in, so nothing is
+      # narrated again and no speech model is downloaded.
       - uses: ./
         with:
           source: pull-request
           presentation: explainer
-          voice: ${{ env.VOICE }}

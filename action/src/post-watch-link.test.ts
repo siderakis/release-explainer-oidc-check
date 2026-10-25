@@ -33,6 +33,12 @@ test("the block is a rule, a clickable poster, and the link", () => {
   );
 });
 
+test("the link carries the live view count, linked to the explainer", () => {
+  expect(BLOCK).toContain(
+    "[Watch the explainer](https://bisque.today/p/o/r/v1) [![Views](https://bisque.today/api/presentations/views-badge/rel-abc)](https://bisque.today/p/o/r/v1)",
+  );
+});
+
 test("without the ids it falls back to the link alone", () => {
   const b = watchBlock("", "", "https://bisque.today/p/o/r/v1");
   expect(b).toBe("---\n\n[Watch the explainer](https://bisque.today/p/o/r/v1)");
@@ -78,7 +84,7 @@ test("notes that merely mention the phrase survive", () => {
 
 // The pull request branch runs against a stand-in `gh` that records every
 // call and answers the comment listing with an empty array.
-function runPullRequestStep(skipped: boolean): string {
+function runPullRequestStep(skipped: boolean, refused = ""): string {
   const dir = mkdtempSync(join(tmpdir(), "post-watch-link-"));
   const log = join(dir, "calls.log");
   writeFileSync(
@@ -99,6 +105,9 @@ function runPullRequestStep(skipped: boolean): string {
         WATCH_URL: "https://bisque.today/p/o/r/v1",
         SKIPPED: String(skipped),
         SKIP_REASON: "It only bumps lodash from 4.17.20 to 4.17.21.",
+        REFUSED: refused,
+        MISSING_KEY: "",
+        GITHUB_WORKFLOW_REF: "",
       },
     },
   );
@@ -117,4 +126,17 @@ test("an explained pull request gets the watch link as a comment", () => {
     "\npr comment 7 -R o/r --body <!-- release-explainer -->",
   );
   expect(calls).toContain("(https://bisque.today/p/o/r/v1)");
+});
+
+test("a plan out of quota leaves no comment", () => {
+  expect(runPullRequestStep(false, "limit")).toBe("");
+});
+
+test("a refused key leaves the setup note saying it was refused", () => {
+  const calls = runPullRequestStep(false, "auth");
+  expect(calls).toContain(
+    "\npr comment 7 -R o/r --body <!-- release-explainer -->\n<!-- release-explainer: setup -->",
+  );
+  expect(calls).toContain("secret was refused (expired or revoked)");
+  expect(calls).not.toContain("(https://bisque.today/p/o/r/v1)");
 });

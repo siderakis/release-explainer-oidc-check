@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+const events = join(mkdtempSync(join(tmpdir(), "key-proxy-")), "events");
 
 let upstream: Server;
 let upstreamPort = 0;
@@ -14,6 +18,13 @@ let seen: {
 beforeAll(async () => {
   upstream = createServer((req, res) => {
     seen = { url: req.url ?? "", headers: req.headers };
+    if (req.url?.endsWith("/spent")) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        '{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}',
+      );
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"ok":true}');
   });
@@ -32,7 +43,7 @@ beforeAll(async () => {
       "Bearer ",
     ],
     {
-      env: { PATH: process.env.PATH ?? "" },
+      env: { PATH: process.env.PATH ?? "", KEY_PROXY_EVENTS: events },
       stdin: new Blob(["real-secret\n"]),
       stdout: "pipe",
     },
@@ -65,6 +76,20 @@ test("injects the real key and strips whatever the client sent", async () => {
   expect(seen?.url).toBe("/v1/chat/completions?x=1");
   expect(seen?.headers.authorization).toBe("Bearer real-secret");
   expect(seen?.headers["x-api-key"]).toBeUndefined();
+});
+
+test("records each response's kind, passing the error body through", async () => {
+  const r = await fetch(`http://127.0.0.1:${proxyPort}/messages/spent`, {
+    method: "POST",
+    body: "{}",
+  });
+  expect(r.status).toBe(400);
+  expect(await r.text()).toContain("credit balance is too low");
+  const lines = readFileSync(events, "utf8").trim().split("\n");
+  expect(lines.at(-1)).toBe("400 limit");
+  expect(lines).toContain("200 ok");
+  // The key never lands in the file.
+  expect(readFileSync(events, "utf8")).not.toContain("real-secret");
 });
 
 test("refuses to start with an empty key", () => {

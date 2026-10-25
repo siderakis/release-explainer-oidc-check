@@ -220,8 +220,9 @@ narration you judged is the narration that ships. It needs no account:
 node present.mjs narrate --html index.html --voice <engine:voice>
 ```
 
-Use the voice the publishing step will use; `publish` narrates again in any
-other voice or speed. It writes `audio/` beside `index.html` and prints, per
+Use the voice the task names, else `kokoro:af_heart`. bisque-cloud/presenter's
+`presentation:` input publishes in the voice and speed you narrated in; any
+other `publish` narrates again unless it names the same ones. It writes `audio/` beside `index.html` and prints, per
 slide, what the voice actually produced: `durationMs`, every word with its
 `start` and `end` in seconds, `pronunciationWarnings` the engine raised while
 speaking, and `exact` (`false` means the timings are estimates). Judge it:

@@ -1387,8 +1387,10 @@ function insideClaudeCodeAction() {
 const CLAUDE_CODE_ACTION_PUBLISH =
   "This is Claude's session inside anthropics/claude-code-action, which " +
   "removes the means to publish from it, whatever the workflow grants. Stop " +
-  "before `publish` and leave the checked presentation in its folder: a " +
-  "later job publishes it with bisque-cloud/presenter's `presentation:` input.";
+  "before `publish`: run `narrate` in the voice the workflow names, judge and " +
+  "fix what it reports, and leave the presentation and its audio/ in the " +
+  "folder. A later job publishes them with bisque-cloud/presenter's " +
+  "`presentation:` input.";
 
 function requireAuth(flags = {}, cwd = process.cwd()) {
   const auth = resolveAuth({
