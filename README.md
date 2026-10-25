@@ -11,3 +11,9 @@ action under test.
   copy, on a Claude plan token.
 
 Explainers land at `bisque.today/p/siderakis/release-explainer-oidc-check`.
+
+- `cca-pull-request-explainer.yml` is
+  `examples/claude-code-action-pull-request-explainer.yml` from
+  bisque-cloud/presenter, unedited: the plugin from the public marketplace and
+  `bisque-cloud/presenter@v1`, so it tests the released action rather than
+  this repository's copy.
