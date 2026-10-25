@@ -186,8 +186,10 @@ runs:
     # its environment and none in any process environment it can read.
     # On a pull request with no key, it passes and says so instead, and the
     # steps that need a model are skipped: the last step posts the note.
+    # Publishing a `presentation` an earlier job wrote needs no model at all.
     - name: Start the key proxy
       id: proxy
+      if: inputs.presentation == ''
       shell: bash
       env:
         SOURCE: ${{ inputs.source }}
@@ -242,7 +244,7 @@ runs:
 
     - name: Author with ${{ steps.proxy.outputs.model }}
       id: agent
-      if: steps.proxy.outputs.missing-key != 'true'
+      if: inputs.presentation == '' && steps.proxy.outputs.missing-key != 'true'
       shell: bash
       env:
         MODEL: ${{ steps.proxy.outputs.model }}
@@ -269,6 +271,16 @@ runs:
       env:
         WORK: ${{ runner.temp }}/release-explainer
       run: node "${{ github.action_path }}/action/src/key-proxy-lifecycle.ts" stop
+
+    # Publish-only: the folder an earlier job wrote stands where the agent's
+    # output would, so the checks and the publish below treat it the same.
+    - name: Take the presentation an earlier job wrote
+      if: inputs.presentation != ''
+      shell: bash
+      env:
+        PRESENTATION: ${{ inputs.presentation }}
+        WORK: ${{ runner.temp }}/release-explainer
+      run: node "${{ github.action_path }}/action/src/take-presentation.ts"
 
     # A skipped run (`when: judged`) wrote no presentation, so there is
     # nothing to check, publish or comment. Neither did a run with no key;
@@ -323,7 +335,7 @@ runs:
       if: always()
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
-        name: release-explainer-${{ steps.proxy.outputs.provider }}
+        name: release-explainer-${{ steps.proxy.outputs.provider || 'publish-only' }}
         path: |
           ${{ runner.temp }}/release-explainer
           !${{ runner.temp }}/release-explainer/key-proxy.*
