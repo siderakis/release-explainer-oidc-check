@@ -97,11 +97,13 @@ inputs:
   presentation:
     description: >-
       Publish a presentation an earlier job already wrote, instead of writing
-      one: the folder holding its index.html and, optionally, context.md and
-      assets/. For a workflow that authors with anthropics/claude-code-action
-      and the presenter plugin, which cannot publish from inside Claude's
-      session. No model runs and no key is needed; this step narrates,
-      publishes and posts the link. Run it in its own job, after the one that
+      one: the folder holding its index.html and, optionally, context.md,
+      assets/ and the audio/ the skill's `narrate` wrote. For a workflow that
+      authors with anthropics/claude-code-action and the presenter plugin,
+      which cannot publish from inside Claude's session. No model runs and no
+      key is needed; this step publishes the narration the earlier job made in
+      `voice`, narrates only the slides it lacks, and posts the link. Run it
+      in its own job, after the one that
       wrote the folder, so nothing the agent touched runs with the publishing
       identity. A relative path is read from the workspace.
     required: false

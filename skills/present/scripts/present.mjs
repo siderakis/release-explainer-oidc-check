@@ -2247,6 +2247,90 @@ function cmdPronunciationReport(flags) {
   process.stdout.write(JSON.stringify({ slides }, null, 2) + "\n");
 }
 
+/**
+ * Narrate every slide on this machine and publish nothing. Needs no account
+ * and no credentials, so it runs where `publish` cannot, such as Claude's
+ * session inside anthropics/claude-code-action.
+ *
+ * Writes `audio/<slideKey>.mp3` and its sidecar exactly as `publish` does, so
+ * a later `publish` of the same folder in the same voice and speed uploads
+ * this audio instead of narrating again, on whatever machine it runs. Prints,
+ * per slide, what the voice produced — its length, every word's timing, and
+ * the warnings the engine raised while speaking — for the author to judge
+ * before anything is published.
+ */
+function cmdNarrate(flags) {
+  if (typeof flags.voice !== "string" || !flags.voice.includes(":")) {
+    fail(
+      "--voice <engine:voice> is required: narrate in the voice publish will " +
+        "use, e.g. --voice kokoro:af_heart, or publish narrates again.",
+    );
+  }
+  if (isCloneEngine(engineFor(flags))) {
+    fail(
+      "narrate cannot use a cloned voice: the recording it is cloned from " +
+        "comes from the account, and narrate reads no account. Publish narrates it.",
+    );
+  }
+  if (flags.speed === true) {
+    fail("--speed needs a value between 0.7 and 1.2 (e.g. --speed 1.1)");
+  }
+  const speed = Number(flags.speed ?? 1.0);
+  if (!Number.isFinite(speed) || speed < 0.7 || speed > 1.2) {
+    fail("--speed must be a number between 0.7 and 1.2");
+  }
+  const htmlPath = path.resolve(flags.html ?? "index.html");
+  const html = fs.readFileSync(htmlPath, "utf8");
+  const problems = lintPresentation(html);
+  if (problems.length > 0) {
+    fail(
+      `${problems.length} problem(s) in the presentation — nothing was synthesized:\n  ` +
+        problems.join("\n  "),
+    );
+  }
+  const audioDir = path.resolve(
+    path.dirname(htmlPath),
+    flags["audio-dir"] ?? "audio",
+  );
+  const plan = narrationPlan(html);
+  const bin = requireTts();
+  ensureEngineInstalled(bin, flags);
+  ensureAlignerInstalled(bin, flags);
+  fs.mkdirSync(audioDir, { recursive: true });
+  const slides = plan.map((slide) => {
+    const mp3 = path.join(audioDir, `${slide.slideKey}.mp3`);
+    const sidecar = path.join(audioDir, `${slide.slideKey}.json`);
+    let made = readCached(sidecar, mp3, slide.text, flags, speed)?.result;
+    if (made) {
+      say(`${slide.slideKey}: reusing local audio`);
+    } else {
+      say(`${slide.slideKey}: synthesizing ${slide.wordCount} words…`);
+      made = synthesizeSlide(bin, slide, mp3, sidecar, flags, speed);
+    }
+    return {
+      slideIndex: slide.slideIndex,
+      slideKey: slide.slideKey,
+      audio: path.relative(process.cwd(), mp3),
+      durationMs: made.durationMs,
+      exact: made.exact,
+      pronunciationWarnings: made.pronunciationWarnings ?? [],
+      words: made.words,
+    };
+  });
+  process.stdout.write(
+    JSON.stringify(
+      {
+        voice: flags.voice,
+        speed,
+        durationMs: slides.reduce((sum, s) => sum + s.durationMs, 0),
+        slides,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+}
+
 /** The manifest's own audio path for a slide — mirrors `audio/<slideKey>.mp3`. */
 function audioPathFor(slideKey) {
   return `audio/${slideKey}.mp3`;
@@ -2395,6 +2479,19 @@ async function cmdPublish(flags) {
     return all.length > 0 ? { warnings: all } : {};
   };
   const plan = narrationPlan(indexHtml);
+  // The audio already on disk for a slide's current text, voice and speed:
+  // what an earlier publish, or `narrate`, made here.
+  const localAudio = (slideKey) => {
+    const slide = plan.find((s) => s.slideKey === slideKey);
+    if (!slide) return null;
+    return readCached(
+      path.join(audioDir, `${slideKey}.json`),
+      path.join(audioDir, `${slideKey}.mp3`),
+      slide.text,
+      flags,
+      speed,
+    );
+  };
   // A cloned voice is named by what is cloned on this machine. Name it now,
   // before the create below declares the voice, so the server can tell
   // whether the audio it holds was spoken in it.
@@ -2672,7 +2769,9 @@ async function cmdPublish(flags) {
       (creation.audioUploads ?? []).map((entry) => [entry.slideKey, entry]),
     );
     let bin = null;
-    if (needed.length > 0) {
+    // Audio `narrate` already made for this text, voice and speed is uploaded
+    // as it is, so a publish that has all of it never loads the engine.
+    if (needed.some((slideKey) => !localAudio(slideKey))) {
       bin = requireTts();
       ensureEngineInstalled(bin, flags);
       ensureAlignerInstalled(bin, flags);
@@ -2822,11 +2921,14 @@ async function cmdPublish(flags) {
   // ── 2. Synthesize exactly those slides.
   const supplied = [];
   if (stale.length > 0) {
-    const bin = requireTts();
-    ensureEngineInstalled(bin, flags);
-    ensureAlignerInstalled(bin, flags);
-    await ensureCloneVoiceReady(bin, flags, auth, me);
-    fs.mkdirSync(audioDir, { recursive: true });
+    let bin = null;
+    if (stale.some((slideKey) => !localAudio(slideKey))) {
+      bin = requireTts();
+      ensureEngineInstalled(bin, flags);
+      ensureAlignerInstalled(bin, flags);
+      await ensureCloneVoiceReady(bin, flags, auth, me);
+      fs.mkdirSync(audioDir, { recursive: true });
+    }
     for (const slideKey of stale) {
       const slide = plan.find((s) => s.slideKey === slideKey);
       if (!slide) continue;
@@ -3525,6 +3627,9 @@ const USAGE = `usage:
   node present.mjs plan    [--html index.html]
   node present.mjs pronunciation-report [--html index.html] --voice <engine:voice>
                            [--engine E]
+  node present.mjs narrate [--html index.html] --voice <engine:voice> [--speed 1.0]
+                           [--engine E] [--align A|none] [--device auto|cpu|gpu]
+                           [--audio-dir audio]
   node present.mjs publish [--html index.html] [--voice <engine:voice>]
                            [--fallback-voice <engine:voice>]
                            [--title T] [--slug S] [--visibility unlisted|public|private]
@@ -3548,6 +3653,10 @@ bisque.cloud (via /api/me) when omitted; --fallback-voice is used only when
 saved voice is not a local one, a publish with --fallback-voice and no --voice
 stops before narrating. Whatever engine that resolves to is installed on first
 use.
+
+narrate narrates every slide here and publishes nothing, with no account. A
+later publish of the folder in the same voice and speed uploads that audio
+instead of narrating again, on any machine.
 
 --made-with credits the models behind the presentation. Pass the model you are
 running as ("Claude Opus 5", "GPT-5.4 mini"); the narrating voice is added for
@@ -3602,6 +3711,8 @@ async function main() {
       return cmdPlan(flags);
     case "pronunciation-report":
       return cmdPronunciationReport(flags);
+    case "narrate":
+      return cmdNarrate(flags);
     case "publish":
       return cmdPublish(flags);
     case "resume":

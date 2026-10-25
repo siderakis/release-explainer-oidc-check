@@ -70,6 +70,7 @@ const NOT_OURS = new Set([
   "speaker", // `bisque-voice` speaker selection
   "scope", // `gemini skills install --scope user`
   "force", // copybara / CI, mentioned in prose
+  "allowed", // `claude --allowedTools …` in a claude-code-action workflow
 ]);
 
 describe("every flag the docs mention is one the code reads", () => {
