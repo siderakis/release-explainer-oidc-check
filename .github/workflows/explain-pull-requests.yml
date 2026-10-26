@@ -47,3 +47,6 @@ jobs:
         with:
           source: pull-request
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # This repository is public, so the default would list every test
+          # run on its channel and in the sitemap. Test runs stay private.
+          visibility: private

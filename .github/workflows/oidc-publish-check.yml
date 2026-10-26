@@ -47,6 +47,9 @@ jobs:
           ACTION_PATH: ${{ github.workspace }}
           EXPECTED_HASH: ${{ steps.skill.outputs.hash }}
           TITLE: A repository that publishes its own explainers
+          # This repository is public, so the default would list every test
+          # run on its channel and in the sitemap. Test runs stay private.
+          VISIBILITY: private
           SLUG: ${{ inputs.slug }}
         run: node action/src/narrate-and-publish.ts
       - name: Report
